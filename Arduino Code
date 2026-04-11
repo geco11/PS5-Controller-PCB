@@ -1,0 +1,144 @@
+#include <Joystick.h>
+
+Joystick_ Joystick(
+  JOYSTICK_DEFAULT_REPORT_ID,
+  JOYSTICK_TYPE_JOYSTICK,
+  12,
+  true, true, true,
+  true, true, true
+);
+
+// ---- CENTER VALUES ----
+#define CENTER_A0 502
+#define CENTER_A1 523
+#define CENTER_A2 511
+#define CENTER_A3 514
+
+// ---- OUTPUT RANGE ----
+#define OUT_MIN 0
+#define OUT_MAX 1023
+#define OUT_CENTER 511.5
+
+// ---- RANGE MULTIPLIER ----
+#define RANGE_MULTIPLIER 1
+
+// ---- Right Y tiny offset ----
+#define RIGHT_Y_OFFSET -2
+
+// ---- DAMPING / SMOOTHING ----
+// smaller = smoother, bigger = more responsive
+#define SMOOTH_ALPHA 0.20
+
+// ---- smooth state ----
+float smoothLX = OUT_CENTER;
+float smoothLY = OUT_CENTER;
+float smoothRX = OUT_CENTER;
+float smoothRY = OUT_CENTER;
+float smoothZ  = OUT_CENTER;
+
+// ---- Center + expand + clamp to 250..773 ----
+int processAxis(int raw, int center) {
+  float v = raw - center;          // center becomes 0
+  v = v * RANGE_MULTIPLIER;        // expand travel
+  v = v + OUT_CENTER;              // shift into output space
+
+  if (v < OUT_MIN) v = OUT_MIN;
+  if (v > OUT_MAX) v = OUT_MAX;
+
+  return (int)v;
+}
+
+// ---- Exponential smoothing ----
+int smoothValue(float &state, int target) {
+  state = state + (target - state) * SMOOTH_ALPHA;
+
+  if (state < OUT_MIN) state = OUT_MIN;
+  if (state > OUT_MAX) state = OUT_MAX;
+
+  return (int)state;
+}
+
+// ---- Buttons ----
+const int pins[12] = {
+  8,   // Ltr
+  9,   // Lu
+  10,  // Ll
+  14,  // Ld
+  16,  // Lr
+  15,  // Ljoy
+  7,   // Rtr
+  4,   // Ru
+  3,   // Rr
+  5,   // Rd
+  6,   // Rl
+  2    // Rjoy
+};
+
+const int btnNr[12] = {
+  6,   // Ltr
+  8,   // Lu
+  4,   // Ll
+  12,  // Ld
+  5,   // Lr
+  10,  // Ljoy
+  7,   // Rtr
+  3,   // Ru
+  1,   // Rr
+  0,   // Rd
+  2,   // Rl
+  11   // Rjoy
+};
+
+void setup() {
+  for (int i = 0; i < 12; i++) {
+    pinMode(pins[i], INPUT_PULLUP);
+  }
+
+  pinMode(A0, INPUT);
+  pinMode(A1, INPUT);
+  pinMode(A2, INPUT);
+  pinMode(A3, INPUT);
+
+  Joystick.begin();
+
+  // optional but useful: tell the library your axis range
+  Joystick.setXAxisRange(OUT_MIN, OUT_MAX);
+  Joystick.setYAxisRange(OUT_MIN, OUT_MAX);
+  Joystick.setZAxisRange(OUT_MIN, OUT_MAX);
+  Joystick.setRxAxisRange(OUT_MIN, OUT_MAX);
+  Joystick.setRyAxisRange(OUT_MIN, OUT_MAX);
+}
+
+void loop() {
+  // ---- LEFT STICK (inverted) ----
+  int lxTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A2), CENTER_A2);
+  int lyTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A3), CENTER_A3);
+
+  Joystick.setXAxis(smoothValue(smoothLX, lxTarget));
+  Joystick.setYAxis(smoothValue(smoothLY, lyTarget));
+
+  // ---- RIGHT STICK (X inverted) ----
+  int rxTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A1), CENTER_A1);
+  Joystick.setRxAxis(smoothValue(smoothRX, rxTarget));
+
+  // ---- RIGHT Y (read from A0, inverted + offset) ----
+  int ryTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A0), CENTER_A0);
+  ryTarget += RIGHT_Y_OFFSET;
+
+  if (ryTarget < OUT_MIN) ryTarget = OUT_MIN;
+  if (ryTarget > OUT_MAX) ryTarget = OUT_MAX;
+
+  Joystick.setRyAxis(smoothValue(smoothRY, ryTarget));
+
+  // ---- SLIDER / Z AXIS ----
+  int zTarget = processAxis(1023 - analogRead(A0), CENTER_A0);
+  Joystick.setZAxis(smoothValue(smoothZ, zTarget));
+
+  // ---- BUTTONS ----
+  for (int i = 0; i < 12; i++) {
+    if (!digitalRead(pins[i])) Joystick.pressButton(btnNr[i]);
+    else Joystick.releaseButton(btnNr[i]);
+  }
+
+  delay(5);
+}
