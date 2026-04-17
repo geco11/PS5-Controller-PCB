@@ -1,11 +1,15 @@
 #include <Joystick.h>
+#include <Keyboard.h>
 
 Joystick_ Joystick(
   JOYSTICK_DEFAULT_REPORT_ID,
   JOYSTICK_TYPE_JOYSTICK,
   12,
+  0,
   true, true, true,
-  true, true, true
+  true, true, false,
+  false, false, false,
+  false, false
 );
 
 // ---- CENTER VALUES ----
@@ -26,21 +30,27 @@ Joystick_ Joystick(
 #define RIGHT_Y_OFFSET -2
 
 // ---- DAMPING / SMOOTHING ----
-// smaller = smoother, bigger = more responsive
 #define SMOOTH_ALPHA 0.20
 
-// ---- smooth state ----
+// ---- Special button indexes ----
+#define LU_INDEX 1
+#define LD_INDEX 3
+
+// ---- Smooth state ----
 float smoothLX = OUT_CENTER;
 float smoothLY = OUT_CENTER;
 float smoothRX = OUT_CENTER;
 float smoothRY = OUT_CENTER;
 float smoothZ  = OUT_CENTER;
 
-// ---- Center + expand + clamp to 250..773 ----
+bool lastLuPressed = false;
+bool lastLdPressed = false;
+
+// ---- Center + expand + clamp ----
 int processAxis(int raw, int center) {
-  float v = raw - center;          // center becomes 0
-  v = v * RANGE_MULTIPLIER;        // expand travel
-  v = v + OUT_CENTER;              // shift into output space
+  float v = raw - center;
+  v = v * RANGE_MULTIPLIER;
+  v = v + OUT_CENTER;
 
   if (v < OUT_MIN) v = OUT_MIN;
   if (v > OUT_MAX) v = OUT_MAX;
@@ -61,9 +71,9 @@ int smoothValue(float &state, int target) {
 // ---- Buttons ----
 const int pins[12] = {
   8,   // Ltr
-  9,   // Lu
+  9,   // Lu -> keyboard backtick
   10,  // Ll
-  14,  // Ld
+  14,  // Ld -> keyboard backslash
   16,  // Lr
   15,  // Ljoy
   7,   // Rtr
@@ -76,9 +86,9 @@ const int pins[12] = {
 
 const int btnNr[12] = {
   6,   // Ltr
-  8,   // Lu
+  8,   // Lu ignored, replaced with keyboard
   4,   // Ll
-  12,  // Ld
+  12,  // Ld ignored, replaced with keyboard
   5,   // Lr
   10,  // Ljoy
   7,   // Rtr
@@ -100,8 +110,8 @@ void setup() {
   pinMode(A3, INPUT);
 
   Joystick.begin();
+  Keyboard.begin();
 
-  // optional but useful: tell the library your axis range
   Joystick.setXAxisRange(OUT_MIN, OUT_MAX);
   Joystick.setYAxisRange(OUT_MIN, OUT_MAX);
   Joystick.setZAxisRange(OUT_MIN, OUT_MAX);
@@ -136,8 +146,33 @@ void loop() {
 
   // ---- BUTTONS ----
   for (int i = 0; i < 12; i++) {
-    if (!digitalRead(pins[i])) Joystick.pressButton(btnNr[i]);
-    else Joystick.releaseButton(btnNr[i]);
+    bool pressed = !digitalRead(pins[i]);
+
+    if (i == LU_INDEX) {
+      if (pressed && !lastLuPressed) {
+        Keyboard.press('`');
+      }
+      if (!pressed && lastLuPressed) {
+        Keyboard.release('`');
+      }
+      lastLuPressed = pressed;
+    }
+    else if (i == LD_INDEX) {
+      if (pressed && !lastLdPressed) {
+        Keyboard.press('\\');
+      }
+      if (!pressed && lastLdPressed) {
+        Keyboard.release('\\');
+      }
+      lastLdPressed = pressed;
+    }
+    else {
+      if (pressed) {
+        Joystick.pressButton(btnNr[i]);
+      } else {
+        Joystick.releaseButton(btnNr[i]);
+      }
+    }
   }
 
   delay(5);
