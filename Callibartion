@@ -1,0 +1,246 @@
+#include <Arduino.h>
+
+// =========================
+// AXIS PINS
+// =========================
+#define AXIS_A0 A0   // Right Y
+#define AXIS_A1 A1   // Right X
+#define AXIS_A2 A2   // Left X
+#define AXIS_A3 A3   // Left Y
+
+// =========================
+// CALIBRATION BUTTON
+// RU = pin 4
+// press once after making circles
+// press again while sticks are centered
+// =========================
+#define CAL_BUTTON_PIN 4
+
+// =========================
+// STATE
+// =========================
+enum CalState {
+  CAPTURE_MINMAX,
+  WAIT_CENTER,
+  DONE
+};
+
+CalState state = CAPTURE_MINMAX;
+
+// =========================
+// MIN / MAX / CENTER VALUES
+// =========================
+int a0Min = 1023;
+int a0Max = 0;
+int a0Center = 0;
+
+int a1Min = 1023;
+int a1Max = 0;
+int a1Center = 0;
+
+int a2Min = 1023;
+int a2Max = 0;
+int a2Center = 0;
+
+int a3Min = 1023;
+int a3Max = 0;
+int a3Center = 0;
+
+// =========================
+// BUTTON EDGE DETECTION
+// =========================
+bool lastButtonState = HIGH;
+
+// =========================
+// TIMING FOR SERIAL STATUS
+// =========================
+unsigned long lastPrintTime = 0;
+
+// =========================
+// READ + UPDATE MIN/MAX
+// =========================
+void updateMinMax() {
+  int v0 = analogRead(AXIS_A0);
+  int v1 = analogRead(AXIS_A1);
+  int v2 = analogRead(AXIS_A2);
+  int v3 = analogRead(AXIS_A3);
+
+  if (v0 < a0Min) a0Min = v0;
+  if (v0 > a0Max) a0Max = v0;
+
+  if (v1 < a1Min) a1Min = v1;
+  if (v1 > a1Max) a1Max = v1;
+
+  if (v2 < a2Min) a2Min = v2;
+  if (v2 > a2Max) a2Max = v2;
+
+  if (v3 < a3Min) a3Min = v3;
+  if (v3 > a3Max) a3Max = v3;
+}
+
+// =========================
+// CAPTURE CENTER
+// =========================
+int readAveragedAxis(int pin, int samples = 50) {
+  long total = 0;
+  for (int i = 0; i < samples; i++) {
+    total += analogRead(pin);
+    delay(2);
+  }
+  return total / samples;
+}
+
+void captureCenters() {
+  a0Center = readAveragedAxis(AXIS_A0);
+  a1Center = readAveragedAxis(AXIS_A1);
+  a2Center = readAveragedAxis(AXIS_A2);
+  a3Center = readAveragedAxis(AXIS_A3);
+}
+
+// =========================
+// PRINT CURRENT LIVE VALUES
+// =========================
+void printLiveMinMax() {
+  Serial.println();
+  Serial.println("Move BOTH joysticks in full circles to find min/max.");
+  Serial.println("When done, press RU.");
+  Serial.println();
+
+  Serial.print("A0  min=");
+  Serial.print(a0Min);
+  Serial.print("  max=");
+  Serial.println(a0Max);
+
+  Serial.print("A1  min=");
+  Serial.print(a1Min);
+  Serial.print("  max=");
+  Serial.println(a1Max);
+
+  Serial.print("A2  min=");
+  Serial.print(a2Min);
+  Serial.print("  max=");
+  Serial.println(a2Max);
+
+  Serial.print("A3  min=");
+  Serial.print(a3Min);
+  Serial.print("  max=");
+  Serial.println(a3Max);
+}
+
+// =========================
+// PRINT FINAL RESULTS
+// =========================
+void printFinalCalibration() {
+  Serial.println();
+  Serial.println("==================================");
+  Serial.println("CALIBRATION COMPLETE");
+  Serial.println("Copy these into your main sketch:");
+  Serial.println("==================================");
+  Serial.println();
+
+  Serial.print("#define A0_MIN     ");
+  Serial.println(a0Min);
+  Serial.print("#define A0_CENTER  ");
+  Serial.println(a0Center);
+  Serial.print("#define A0_MAX     ");
+  Serial.println(a0Max);
+  Serial.println();
+
+  Serial.print("#define A1_MIN     ");
+  Serial.println(a1Min);
+  Serial.print("#define A1_CENTER  ");
+  Serial.println(a1Center);
+  Serial.print("#define A1_MAX     ");
+  Serial.println(a1Max);
+  Serial.println();
+
+  Serial.print("#define A2_MIN     ");
+  Serial.println(a2Min);
+  Serial.print("#define A2_CENTER  ");
+  Serial.println(a2Center);
+  Serial.print("#define A2_MAX     ");
+  Serial.println(a2Max);
+  Serial.println();
+
+  Serial.print("#define A3_MIN     ");
+  Serial.println(a3Min);
+  Serial.print("#define A3_CENTER  ");
+  Serial.println(a3Center);
+  Serial.print("#define A3_MAX     ");
+  Serial.println(a3Max);
+  Serial.println();
+}
+
+// =========================
+// BUTTON PRESS DETECTION
+// INPUT_PULLUP means pressed = LOW
+// =========================
+bool buttonJustPressed() {
+  bool current = digitalRead(CAL_BUTTON_PIN);
+  bool pressedNow = (lastButtonState == HIGH && current == LOW);
+  lastButtonState = current;
+  return pressedNow;
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(CAL_BUTTON_PIN, INPUT_PULLUP);
+
+  pinMode(AXIS_A0, INPUT);
+  pinMode(AXIS_A1, INPUT);
+  pinMode(AXIS_A2, INPUT);
+  pinMode(AXIS_A3, INPUT);
+
+  delay(1000);
+
+  Serial.println();
+  Serial.println("Joystick calibration started.");
+  Serial.println("STEP 1: Move BOTH joysticks in big full circles.");
+  Serial.println("STEP 2: Press RU when done.");
+  Serial.println("STEP 3: Leave both joysticks centered.");
+  Serial.println("STEP 4: Press RU again.");
+  Serial.println();
+}
+
+void loop() {
+  if (state == CAPTURE_MINMAX) {
+    updateMinMax();
+
+    if (millis() - lastPrintTime > 700) {
+      printLiveMinMax();
+      lastPrintTime = millis();
+    }
+
+    if (buttonJustPressed()) {
+      state = WAIT_CENTER;
+      Serial.println();
+      Serial.println("Min/max capture finished.");
+      Serial.println("Now leave both joysticks centered.");
+      Serial.println("Press RU again to save center values.");
+      delay(300);
+    }
+  }
+  else if (state == WAIT_CENTER) {
+    if (millis() - lastPrintTime > 700) {
+      Serial.println();
+      Serial.println("Waiting for centered joysticks...");
+      Serial.print("Current A0="); Serial.println(analogRead(AXIS_A0));
+      Serial.print("Current A1="); Serial.println(analogRead(AXIS_A1));
+      Serial.print("Current A2="); Serial.println(analogRead(AXIS_A2));
+      Serial.print("Current A3="); Serial.println(analogRead(AXIS_A3));
+      lastPrintTime = millis();
+    }
+
+    if (buttonJustPressed()) {
+      captureCenters();
+      printFinalCalibration();
+      state = DONE;
+      delay(300);
+    }
+  }
+  else if (state == DONE) {
+  }
+
+  delay(5);
+}
