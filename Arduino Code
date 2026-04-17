@@ -12,31 +12,50 @@ Joystick_ Joystick(
   false, false
 );
 
-// ---- CENTER VALUES ----
-#define CENTER_A0 502
-#define CENTER_A1 523
-#define CENTER_A2 511
-#define CENTER_A3 514
+// =========================
+// CALIBRATION PER AXIS
+// enter real values for each axis
+// =========================
+#define A0_MIN     0
+#define A0_CENTER  505
+#define A0_MAX     1023
 
-// ---- OUTPUT RANGE ----
-#define OUT_MIN 0
-#define OUT_MAX 1023
-#define OUT_CENTER 511.5
+#define A1_MIN     0
+#define A1_CENTER  514
+#define A1_MAX     1023
 
-// ---- RANGE MULTIPLIER ----
-#define RANGE_MULTIPLIER 1
+#define A2_MIN     0
+#define A2_CENTER  521
+#define A2_MAX     1023
 
-// ---- Right Y tiny offset ----
-#define RIGHT_Y_OFFSET -2
+#define A3_MIN     0
+#define A3_CENTER  510
+#define A3_MAX     1023
 
-// ---- DAMPING / SMOOTHING ----
-#define SMOOTH_ALPHA 0.20
 
-// ---- Special button indexes ----
+
+// =========================
+// OUTPUT RANGE
+// =========================
+#define OUT_MIN     0
+#define OUT_MAX     1023
+#define OUT_CENTER  511
+
+// =========================
+// SMALL ADJUSTMENTS
+// =========================
+#define RIGHT_Y_OFFSET  -2
+#define SMOOTH_ALPHA    0.20
+
+// =========================
+// SPECIAL BUTTON INDEXES
+// =========================
 #define LU_INDEX 1
 #define LD_INDEX 3
 
-// ---- Smooth state ----
+// =========================
+// SMOOTH STATE
+// =========================
 float smoothLX = OUT_CENTER;
 float smoothLY = OUT_CENTER;
 float smoothRX = OUT_CENTER;
@@ -46,19 +65,31 @@ float smoothZ  = OUT_CENTER;
 bool lastLuPressed = false;
 bool lastLdPressed = false;
 
-// ---- Center + expand + clamp ----
-int processAxis(int raw, int center) {
-  float v = raw - center;
-  v = v * RANGE_MULTIPLIER;
-  v = v + OUT_CENTER;
+// =========================
+// PIECEWISE CALIBRATION
+// maps MIN -> 0, CENTER -> 511, MAX -> 1023
+// =========================
+int mapCalibratedAxis(int raw, int inMin, int inCenter, int inMax) {
+  if (raw < inMin) raw = inMin;
+  if (raw > inMax) raw = inMax;
 
-  if (v < OUT_MIN) v = OUT_MIN;
-  if (v > OUT_MAX) v = OUT_MAX;
+  long result;
 
-  return (int)v;
+  if (raw <= inCenter) {
+    result = map(raw, inMin, inCenter, OUT_MIN, OUT_CENTER);
+  } else {
+    result = map(raw, inCenter, inMax, OUT_CENTER, OUT_MAX);
+  }
+
+  if (result < OUT_MIN) result = OUT_MIN;
+  if (result > OUT_MAX) result = OUT_MAX;
+
+  return (int)result;
 }
 
-// ---- Exponential smoothing ----
+// =========================
+// SMOOTHING
+// =========================
 int smoothValue(float &state, int target) {
   state = state + (target - state) * SMOOTH_ALPHA;
 
@@ -68,7 +99,9 @@ int smoothValue(float &state, int target) {
   return (int)state;
 }
 
-// ---- Buttons ----
+// =========================
+// BUTTONS
+// =========================
 const int pins[12] = {
   8,   // Ltr
   9,   // Lu -> keyboard backtick
@@ -86,9 +119,9 @@ const int pins[12] = {
 
 const int btnNr[12] = {
   6,   // Ltr
-  8,   // Lu ignored, replaced with keyboard
+  8,   // Lu ignored
   4,   // Ll
-  12,  // Ld ignored, replaced with keyboard
+  12,  // Ld ignored
   5,   // Lr
   10,  // Ljoy
   7,   // Rtr
@@ -120,19 +153,37 @@ void setup() {
 }
 
 void loop() {
-  // ---- LEFT STICK (inverted) ----
-  int lxTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A2), CENTER_A2);
-  int lyTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A3), CENTER_A3);
+  // =========================
+  // LEFT STICK
+  // A2 = LX, A3 = LY
+  // inverted
+  // =========================
+  int lxRaw = analogRead(A2);
+  int lyRaw = analogRead(A3);
+
+  int lxTarget = OUT_MAX - mapCalibratedAxis(lxRaw, A2_MIN, A2_CENTER, A2_MAX);
+  int lyTarget = OUT_MAX - mapCalibratedAxis(lyRaw, A3_MIN, A3_CENTER, A3_MAX);
 
   Joystick.setXAxis(smoothValue(smoothLX, lxTarget));
   Joystick.setYAxis(smoothValue(smoothLY, lyTarget));
 
-  // ---- RIGHT STICK (X inverted) ----
-  int rxTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A1), CENTER_A1);
+  // =========================
+  // RIGHT STICK X
+  // A1 = RX
+  // inverted
+  // =========================
+  int rxRaw = analogRead(A1);
+  int rxTarget = OUT_MAX - mapCalibratedAxis(rxRaw, A1_MIN, A1_CENTER, A1_MAX);
+
   Joystick.setRxAxis(smoothValue(smoothRX, rxTarget));
 
-  // ---- RIGHT Y (read from A0, inverted + offset) ----
-  int ryTarget = OUT_MAX + OUT_MIN - processAxis(analogRead(A0), CENTER_A0);
+  // =========================
+  // RIGHT STICK Y
+  // A0 = RY
+  // inverted + offset
+  // =========================
+  int ryRaw = analogRead(A0);
+  int ryTarget = OUT_MAX - mapCalibratedAxis(ryRaw, A0_MIN, A0_CENTER, A0_MAX);
   ryTarget += RIGHT_Y_OFFSET;
 
   if (ryTarget < OUT_MIN) ryTarget = OUT_MIN;
@@ -140,11 +191,16 @@ void loop() {
 
   Joystick.setRyAxis(smoothValue(smoothRY, ryTarget));
 
-  // ---- SLIDER / Z AXIS ----
-  int zTarget = processAxis(1023 - analogRead(A0), CENTER_A0);
+  // =========================
+  // Z AXIS / SLIDER
+  // using A0 reversed
+  // =========================
+  int zTarget = mapCalibratedAxis(1023 - ryRaw, 0, 1023 - A0_CENTER, 1023);
   Joystick.setZAxis(smoothValue(smoothZ, zTarget));
 
-  // ---- BUTTONS ----
+  // =========================
+  // BUTTONS
+  // =========================
   for (int i = 0; i < 12; i++) {
     bool pressed = !digitalRead(pins[i]);
 
