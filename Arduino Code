@@ -17,22 +17,20 @@ Joystick_ Joystick(
 // enter real values for each axis
 // =========================
 #define A0_MIN     0
-#define A0_CENTER  505
+#define A0_CENTER  520
 #define A0_MAX     1023
 
 #define A1_MIN     0
-#define A1_CENTER  514
+#define A1_CENTER  522
 #define A1_MAX     1023
 
 #define A2_MIN     0
-#define A2_CENTER  521
+#define A2_CENTER  511
 #define A2_MAX     1023
 
 #define A3_MIN     0
-#define A3_CENTER  510
+#define A3_CENTER  515
 #define A3_MAX     1023
-
-
 
 // =========================
 // OUTPUT RANGE
@@ -104,9 +102,9 @@ int smoothValue(float &state, int target) {
 // =========================
 const int pins[12] = {
   8,   // Ltr
-  9,   // Lu -> keyboard backtick
+  9,   // Lu -> keyboard backtick + controller button
   10,  // Ll
-  14,  // Ld -> keyboard backslash
+  14,  // Ld -> keyboard backslash + controller button
   16,  // Lr
   15,  // Ljoy
   7,   // Rtr
@@ -119,9 +117,9 @@ const int pins[12] = {
 
 const int btnNr[12] = {
   6,   // Ltr
-  8,   // Lu ignored
+  8,   // Lu
   4,   // Ll
-  12,  // Ld ignored
+  9,  // Ld
   5,   // Lr
   10,  // Ljoy
   7,   // Rtr
@@ -204,6 +202,7 @@ void loop() {
   for (int i = 0; i < 12; i++) {
     bool pressed = !digitalRead(pins[i]);
 
+    // LU = keyboard + controller button
     if (i == LU_INDEX) {
       if (pressed && !lastLuPressed) {
         Keyboard.press('`');
@@ -212,7 +211,15 @@ void loop() {
         Keyboard.release('`');
       }
       lastLuPressed = pressed;
+
+      if (pressed) {
+        Joystick.pressButton(btnNr[i]);
+      } else {
+        Joystick.releaseButton(btnNr[i]);
+      }
     }
+
+    // LD = keyboard + controller button
     else if (i == LD_INDEX) {
       if (pressed && !lastLdPressed) {
         Keyboard.press('\\');
@@ -221,7 +228,15 @@ void loop() {
         Keyboard.release('\\');
       }
       lastLdPressed = pressed;
+
+      if (pressed) {
+        Joystick.pressButton(btnNr[i]);
+      } else {
+        Joystick.releaseButton(btnNr[i]);
+      }
     }
+
+    // all other buttons = normal controller buttons
     else {
       if (pressed) {
         Joystick.pressButton(btnNr[i]);
