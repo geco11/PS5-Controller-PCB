@@ -1,0 +1,480 @@
+#include <Mouse.h>
+#include <Keyboard.h>
+#include <string.h>
+
+// =========================
+// Your pins
+// =========================
+const int pins[12] = {
+  8,   // 0 Ltr  -> LEFT CLICK
+  9,   // 1 Lu   -> ABC1
+  10,  // 2 Ll   -> DEF2
+  14,  // 3 Ld   -> GHI3
+  16,  // 4 Lr   -> JKL4
+  15,  // 5 Ljoy -> SPACE
+  7,   // 6 Rtr  -> RIGHT CLICK
+  4,   // 7 Ru   -> MNO5
+  3,   // 8 Rr   -> PQRS6
+  5,   // 9 Rd   -> TUV79
+  6,   // 10 Rl  -> WXYZ80
+  2    // 11 Rjoy -> BACKSPACE
+};
+
+// =========================
+// Joystick pins
+// =========================
+const int LEFT_JOY_X_PIN  = A0;   // sniper mouse
+const int LEFT_JOY_Y_PIN  = A1;   // sniper mouse
+const int RIGHT_JOY_X_PIN = A2;   // normal mouse
+const int RIGHT_JOY_Y_PIN = A3;   // normal mouse
+
+// =========================
+// Mouse tuning
+// =========================
+const int DEADZONE = 80;
+const bool INVERT_Y = true;
+
+// normal stick
+const float NORMAL_SENSITIVITY = 1.5;
+const int NORMAL_MAX_STEP = 6;
+
+// sniper stick
+const int SNIPER_DEADZONE = 90;
+const float SNIPER_SENSITIVITY = 0.55;
+const int SNIPER_MAX_STEP = 2;
+
+// =========================
+// Typing settings
+// =========================
+const unsigned long MULTITAP_TIMEOUT      = 501;
+const unsigned long DEBOUNCE_MS           = 25;
+
+// space/backspace hold timing
+const unsigned long EDIT_HOLD_START_DELAY = 220;
+const unsigned long EDIT_HOLD_REPEAT_MS   = 70;
+
+// letters/numbers hold timing
+const unsigned long TYPE_HOLD_START_DELAY = 500;
+const unsigned long TYPE_HOLD_REPEAT_MS   = 500;
+
+// =========================
+// Mouse state
+// =========================
+int centerX = 512;
+int centerY = 512;
+int leftCenterX = 512;
+int leftCenterY = 512;
+
+bool leftHeld = false;
+bool rightHeld = false;
+
+// =========================
+// Debounce state for all 12 buttons
+// =========================
+bool lastReadAll[12];
+bool stableAll[12];
+unsigned long lastDebounceAll[12];
+
+// =========================
+// Multi-tap typing state
+// =========================
+int activeGroup = -1;
+int activeIndex = 0;
+bool previewActive = false;
+unsigned long lastTapTime = 0;
+
+// hold tracking for type buttons
+bool typeHeld[8];
+unsigned long typeHoldStart[8];
+unsigned long typeLastRepeat[8];
+
+// hold tracking for space/backspace
+bool spaceHeld = false;
+unsigned long spaceHoldStart = 0;
+unsigned long spaceLastRepeat = 0;
+
+bool backHeld = false;
+unsigned long backHoldStart = 0;
+unsigned long backLastRepeat = 0;
+
+// =========================
+// Character groups
+// =========================
+const int TYPE_BUTTON_COUNT = 8;
+
+const char* groups[TYPE_BUTTON_COUNT] = {
+  "ABC1",
+  "DEF2",
+  "GHI3",
+  "JKL4",
+  "MNO5",
+  "PQRS6",
+  "TUV79",
+  "WXYZ80"
+};
+
+// =========================
+// Setup
+// =========================
+void setup() {
+  for (int i = 0; i < 12; i++) {
+    pinMode(pins[i], INPUT_PULLUP);
+    lastReadAll[i] = HIGH;
+    stableAll[i] = HIGH;
+    lastDebounceAll[i] = 0;
+  }
+
+  for (int i = 0; i < 8; i++) {
+    typeHeld[i] = false;
+    typeHoldStart[i] = 0;
+    typeLastRepeat[i] = 0;
+  }
+
+  pinMode(LEFT_JOY_X_PIN, INPUT);
+  pinMode(LEFT_JOY_Y_PIN, INPUT);
+  pinMode(RIGHT_JOY_X_PIN, INPUT);
+  pinMode(RIGHT_JOY_Y_PIN, INPUT);
+
+  delay(1000);
+  calibrate();
+
+  Mouse.begin();
+  Keyboard.begin();
+}
+
+// =========================
+// Main loop
+// =========================
+void loop() {
+  updateDebounceStates();
+
+  handleClicks();
+  moveMouseWithSniper();
+
+  handleTypingPresses();
+  handleHeldRepeats();
+  finalizePreviewIfTimedOut();
+
+  delay(5);
+}
+
+// =========================
+// Calibration
+// =========================
+void calibrate() {
+  long sx = 0, sy = 0;
+  long lsx = 0, lsy = 0;
+
+  for (int i = 0; i < 40; i++) {
+    sx  += analogRead(RIGHT_JOY_X_PIN);
+    sy  += analogRead(RIGHT_JOY_Y_PIN);
+    lsx += analogRead(LEFT_JOY_X_PIN);
+    lsy += analogRead(LEFT_JOY_Y_PIN);
+    delay(5);
+  }
+
+  centerX = sx / 40;
+  centerY = sy / 40;
+  leftCenterX = lsx / 40;
+  leftCenterY = lsy / 40;
+}
+
+// =========================
+// Clicks
+// =========================
+void handleClicks() {
+  bool l = (digitalRead(pins[0]) == LOW);
+  bool r = (digitalRead(pins[6]) == LOW);
+
+  if (l && !leftHeld) {
+    Mouse.press(MOUSE_LEFT);
+    leftHeld = true;
+  } else if (!l && leftHeld) {
+    Mouse.release(MOUSE_LEFT);
+    leftHeld = false;
+  }
+
+  if (r && !rightHeld) {
+    Mouse.press(MOUSE_RIGHT);
+    rightHeld = true;
+  } else if (!r && rightHeld) {
+    Mouse.release(MOUSE_RIGHT);
+    rightHeld = false;
+  }
+}
+
+// =========================
+// Mouse movement
+// Right stick = normal
+// Left stick = sniper precision
+// =========================
+void moveMouseWithSniper() {
+  // right joystick (normal)
+  int rx = 1023 - analogRead(RIGHT_JOY_X_PIN) - centerX;
+  int ry = analogRead(RIGHT_JOY_Y_PIN) - centerY;
+
+  if (abs(rx) < DEADZONE) rx = 0;
+  if (abs(ry) < DEADZONE) ry = 0;
+
+  // left joystick (sniper)
+  int lx =1023-analogRead(LEFT_JOY_X_PIN) - leftCenterX;
+  int ly = analogRead(LEFT_JOY_Y_PIN) - leftCenterY;
+
+  if (abs(lx) < SNIPER_DEADZONE) lx = 0;
+  if (abs(ly) < SNIPER_DEADZONE) ly = 0;
+
+  // choose the stick with stronger movement
+  int rStrength = abs(rx) + abs(ry);
+  int lStrength = abs(lx) + abs(ly);
+                 nbeb
+  int mx = 0;
+  int my = 0;
+
+  if (lStrength > rStrength && lStrength > 0) {
+    mx = scaleCustom(lx, SNIPER_DEADZONE, SNIPER_SENSITIVITY, SNIPER_MAX_STEP);
+    my = scaleCustom(ly, SNIPER_DEADZONE, SNIPER_SENSITIVITY, SNIPER_MAX_STEP);
+  } else if (rStrength > 0) {
+    mx = scaleCustom(rx, DEADZONE, NORMAL_SENSITIVITY, NORMAL_MAX_STEP);
+    my = scaleCustom(ry, DEADZONE, NORMAL_SENSITIVITY, NORMAL_MAX_STEP);
+  }
+
+  if (INVERT_Y) my = -my;
+
+  if (mx != 0 || my != 0) {
+    Mouse.move(mx, my, 0);
+  }
+}
+
+int scaleCustom(int v, int dz, float sensitivity, int maxStep) {
+  if (v == 0) return 0;
+
+  int sign = (v > 0) ? 1 : -1;
+  int mag = abs(v) - dz;
+  if (mag < 0) mag = 0;
+
+  float norm = (float)mag / (512.0 - dz);
+  if (norm > 1.0) norm = 1.0;
+
+  int out = (int)(norm * sensitivity * maxStep);
+
+  if (out < 1) out = 1;
+  if (out > maxStep) out = maxStep;
+
+  return out * sign;
+}
+
+// =========================
+// Debounce
+// =========================
+void updateDebounceStates() {
+  for (int i = 0; i < 12; i++) {
+    bool reading = digitalRead(pins[i]);
+
+    if (reading != lastReadAll[i]) {
+      lastDebounceAll[i] = millis();
+      lastReadAll[i] = reading;
+    }
+
+    if ((millis() - lastDebounceAll[i]) > DEBOUNCE_MS) {
+      stableAll[i] = reading;
+    }
+  }
+}
+
+bool isPressedByIndex(int pinIndex) {
+  return (stableAll[pinIndex] == LOW);
+}
+
+bool pressedEventByIndex(int pinIndex) {
+  static bool prevStable[12] = {
+    HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH,HIGH
+  };
+
+  bool event = false;
+  if (prevStable[pinIndex] == HIGH && stableAll[pinIndex] == LOW) {
+    event = true;
+  }
+  prevStable[pinIndex] = stableAll[pinIndex];
+  return event;
+}
+
+// =========================
+// Typing helpers
+// =========================
+char getGroupChar(int groupIndex, int charIndex) {
+  char c = groups[groupIndex][charIndex];
+  if (c >= 'A' && c <= 'Z') c = c + 32;
+  return c;
+}
+
+int getPinIndexFromTypeButton(int typeButtonIndex) {
+  switch (typeButtonIndex) {
+    case 0: return 1;
+    case 1: return 2;
+    case 2: return 3;
+    case 3: return 4;
+    case 4: return 7;
+    case 5: return 8;
+    case 6: return 9;
+    case 7: return 10;
+    default: return 1;
+  }
+}
+
+void clearPreviewState() {
+  previewActive = false;
+  activeGroup = -1;
+  activeIndex = 0;
+}
+
+void finalizePreviewIfTimedOut() {
+  if (previewActive && (millis() - lastTapTime >= MULTITAP_TIMEOUT)) {
+    clearPreviewState();
+  }
+}
+
+void finalizePrintedPreviewNow() {
+  if (previewActive) {
+    clearPreviewState();
+  }
+}
+
+void typeSpaceOnce() {
+  finalizePrintedPreviewNow();
+  Keyboard.write(' ');
+}
+
+void typeBackspaceOnce() {
+  if (previewActive) {
+    Keyboard.write(KEY_BACKSPACE);
+    clearPreviewState();
+  } else {
+    Keyboard.write(KEY_BACKSPACE);
+  }
+}
+
+// =========================
+// Typing logic
+// =========================
+void handleTypingPresses() {
+  if (pressedEventByIndex(5)) {
+    typeSpaceOnce();
+    spaceHeld = true;
+    spaceHoldStart = millis();
+    spaceLastRepeat = millis();
+  }
+  if (!isPressedByIndex(5)) {
+    spaceHeld = false;
+  }
+
+  if (pressedEventByIndex(11)) {
+    typeBackspaceOnce();
+    backHeld = true;
+    backHoldStart = millis();
+    backLastRepeat = millis();
+  }
+  if (!isPressedByIndex(11)) {
+    backHeld = false;
+  }
+
+  for (int i = 0; i < TYPE_BUTTON_COUNT; i++) {
+    int pinIndex = getPinIndexFromTypeButton(i);
+
+    if (pressedEventByIndex(pinIndex)) {
+      handleTypePress(i);
+      typeHeld[i] = true;
+      typeHoldStart[i] = millis();
+      typeLastRepeat[i] = millis();
+    }
+
+    if (!isPressedByIndex(pinIndex)) {
+      typeHeld[i] = false;
+    }
+  }
+}
+
+void handleHeldRepeats() {
+  unsigned long now = millis();
+
+  if (spaceHeld) {
+    if ((now - spaceHoldStart) >= EDIT_HOLD_START_DELAY &&
+        (now - spaceLastRepeat) >= EDIT_HOLD_REPEAT_MS) {
+      typeSpaceOnce();
+      spaceLastRepeat = now;
+    }
+  }
+
+  if (backHeld) {
+    if ((now - backHoldStart) >= EDIT_HOLD_START_DELAY &&
+        (now - backLastRepeat) >= EDIT_HOLD_REPEAT_MS) {
+      typeBackspaceOnce();
+      backLastRepeat = now;
+    }
+  }
+
+  for (int i = 0; i < TYPE_BUTTON_COUNT; i++) {
+    if (typeHeld[i]) {
+      if ((now - typeHoldStart[i]) >= TYPE_HOLD_START_DELAY &&
+          (now - typeLastRepeat[i]) >= TYPE_HOLD_REPEAT_MS) {
+        repeatCycleSameGroup(i);
+        typeLastRepeat[i] = now;
+      }
+    }
+  }
+}
+
+void handleTypePress(int groupIndex) {
+  if (!previewActive) {
+    activeGroup = groupIndex;
+    activeIndex = 0;
+    char c = getGroupChar(activeGroup, activeIndex);
+    Keyboard.write(c);
+    previewActive = true;
+    lastTapTime = millis();
+    return;
+  }
+
+  if (activeGroup == groupIndex) {
+    int len = strlen(groups[groupIndex]);
+    activeIndex = (activeIndex + 1) % len;
+
+    Keyboard.write(KEY_BACKSPACE);
+    char c = getGroupChar(activeGroup, activeIndex);
+    Keyboard.write(c);
+
+    lastTapTime = millis();
+  } else {
+    activeGroup = groupIndex;
+    activeIndex = 0;
+    char c = getGroupChar(activeGroup, activeIndex);
+    Keyboard.write(c);
+
+    previewActive = true;
+    lastTapTime = millis();
+  }
+}
+
+void repeatCycleSameGroup(int groupIndex) {
+  if (!previewActive) {
+    activeGroup = groupIndex;
+    activeIndex = 0;
+    char c = getGroupChar(activeGroup, activeIndex);
+    Keyboard.write(c);
+    previewActive = true;
+    lastTapTime = millis();
+    return;
+  }
+
+  if (activeGroup != groupIndex) {
+    return;
+  }
+
+  int len = strlen(groups[groupIndex]);
+  activeIndex = (activeIndex + 1) % len;
+
+  Keyboard.write(KEY_BACKSPACE);
+  char c = getGroupChar(activeGroup, activeIndex);
+  Keyboard.write(c);
+
+  lastTapTime = millis();
+}
